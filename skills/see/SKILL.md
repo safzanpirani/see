@@ -1,6 +1,6 @@
 ---
 name: see
-description: Read an image when you have no vision — a screenshot, diagram, photo, chart, PDF page, or an image URL. `see ocr` extracts text locally with the OS recogniser (free, offline, sub-second); `see ask` sends it to a vision model for meaning; `see <img>` renders an ASCII layout map. Use when the user references an image/screenshot/diagram/mockup by path or URL, pastes a share link (share.safzan.dev, CleanShot, imgur, a CDN), asks "what does this say/show", asks you to transcribe or OCR an image, compare a UI against a design, debug from a screenshot of an error, or when a tool hands back an image path you must act on. Also use instead of writing any ad-hoc pixel-decoding, ASCII-art, or image-parsing script yourself.
+description: Read an image when you have no vision, or bulk-caption an image set — a screenshot, diagram, photo, chart, PDF page, or an image URL. `see ocr` extracts text locally with the OS recogniser (free, offline, sub-second); `see ask` sends it to a vision model for meaning; `see <img>` renders an ASCII layout map. `see caption` bulk-captions a folder into stem-keyed JSON for LoRA training. Use when the user references an image/screenshot/diagram/mockup by path or URL, asks to caption a dataset or training set, pastes a share link (share.safzan.dev, CleanShot, imgur, a CDN), asks "what does this say/show", asks you to transcribe or OCR an image, compare a UI against a design, debug from a screenshot of an error, or when a tool hands back an image path you must act on. Also use instead of writing any ad-hoc pixel-decoding, ASCII-art, or image-parsing script yourself.
 ---
 
 # see
@@ -20,6 +20,7 @@ see ask shot.png "what's the error in the terminal?"
 see ask https://share.safzan.dev/slQAA8YB.webp  # URLs work directly
 see shot.png -w 100 --grid                      # local layout map, free, instant
 see info shot.png                               # dimensions/format only
+see caption ./dataset --trigger "ohwx woman" --txt   # bulk-caption a training set
 ```
 
 Try `see ocr` first when you only need the text — it costs nothing and takes under a
@@ -38,6 +39,25 @@ on Linux. `see ocr --backends` shows what this machine has.
 | where blocks sit, rough proportions, is it a wide screenshot or a phone shot | `see <src> -w 100` |
 | coordinates to crop into next | `see <src> --grid` then `see ask <src>` |
 | just the pixel dimensions | `see info <src>` |
+| captions for a folder of training images | `see caption <dir> --trigger "<token>"` |
+
+## Bulk captioning
+
+Past a handful of images, never caption inline and never hand it back to the user —
+`see caption <dir> --trigger "<tok>" --txt` does the whole set concurrently into one
+stem-keyed JSON plus `.txt` sidecars.
+
+- **It resumes.** Stems already in `--out` are skipped and the file is flushed after every
+  image, so a crash or a later batch of additions costs only the missing captions. Just
+  re-run the same command — that is also how you retry failures.
+- **Check the shot-type histogram it prints.** Under ~20 full-body/wide frames, full-body
+  identity does not train; say so before anyone spends a GPU hour.
+- **The default brief deliberately omits face/hair/build/age/ethnicity** — those are
+  constant across a character set and belong in the trigger token. Do not "improve" the
+  brief by adding them. Use `--extra` for wardrobe/era context, `--prompt-file` to replace
+  it wholesale, and `--dry-run` to see the brief and the file list before spending.
+- Backgrounded runs: grep the last line for `CAPTIONS_WRITTEN [0-9]+` (digits required —
+  the brief text itself contains the bare marker), and check the exit code.
 
 ## Do not
 
@@ -94,8 +114,8 @@ error means that file is missing — free keys at <https://aistudio.google.com/a
 
 ## MCP
 
-Same actions as tools, for MCP clients: `see_ocr`, `see_ocr_backends`, `see_ask`,
-`see_render`, `see_info`.
+Same actions as tools, for MCP clients: `see_ocr`, `see_ocr_backends`, `see_caption`,
+`see_ask`, `see_render`, `see_info`.
 
 ```sh
 claude mcp add see -- bun run ~/Development/see/src/mcp.ts

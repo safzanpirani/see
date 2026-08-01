@@ -10,6 +10,7 @@ for **understanding**. Only the last one costs an API call.
 see shot.png                                  # ASCII layout, sized to your terminal
 see ocr shot.png                              # the text, offline and free
 see ask shot.png                              # what it means (vision model)
+see caption ./dataset --trigger "ohwx woman" --txt   # bulk-caption a training set
 see diagram.png --edges --grid                # structure + citable coordinates
 see https://share.safzan.dev/slQAA8YB.webp    # URLs work directly
 see ask photo.jpg "what model is the laptop?" # ask a vision model instead
@@ -49,6 +50,37 @@ So the workflow is:
 3. `see ocr shot.png` — pull the words out locally. Free, offline, sub-second.
 4. `see ask shot.png` — when you need meaning rather than strings, or when OCR
    comes back empty or mangled.
+
+## Bulk captioning (`see caption`)
+
+For LoRA/training datasets: caption a whole folder into one stem-keyed JSON,
+concurrently, and write the `.txt` sidecars kohya and diffusers expect.
+
+```bash
+see caption ./dataset --trigger "ohwx woman" --out captions.json --txt
+see caption ./dataset --dry-run          # list the work and print the brief, call nothing
+see caption ./dataset                    # run it again — only new images cost anything
+```
+
+- **Resumes by default.** Stems already in `--out` are skipped, and the file is
+  rewritten after *every* image. A crash, a Ctrl-C or a rate limit costs one
+  caption, not the run; adding images later costs only the additions.
+- **Failures are isolated.** A broken file is reported and left out of the JSON;
+  re-running retries exactly those. Rate limits get exponential backoff, and the
+  key chain rotates as usual.
+- **The default brief captions what VARIES** — clothing, pose, gaze, shot type,
+  scene — and explicitly refuses to describe face, hair, build, age or
+  ethnicity. Those are constant across a character set, so naming them teaches
+  the model words instead of the subject; they belong in the trigger token.
+  Replace the whole brief with `--prompt-file`, or add context with `--extra`.
+- **Shot-type histogram, free.** Every run prints the distribution and warns
+  below ~20 full-body/wide frames, which is roughly where full-body identity
+  stops being trainable. Check it *before* paying for a training run.
+- Prints `CAPTIONS_WRITTEN <n>` on the last line and exits non-zero if anything
+  failed, so a backgrounded run is greppable: `grep -qE "CAPTIONS_WRITTEN [0-9]+"`.
+
+Inputs can be directories, individual files, or a targets `.json`
+(`{stem: path}` or `[{stem, path}]`).
 
 ## OCR (`see ocr`)
 
@@ -125,7 +157,7 @@ copying the folder into `~/.claude/skills/`.
 ## MCP server
 
 Expose the whole thing to an agent as tools — `see_render`, `see_ocr`,
-`see_ocr_backends`, `see_ask`, `see_info`:
+`see_ocr_backends`, `see_caption`, `see_ask`, `see_info`:
 
 ```bash
 claude mcp add see -- bun run /path/to/see/src/mcp.ts
@@ -148,6 +180,15 @@ render
       --threshold N    braille ink cutoff 0-255 (default: Otsu)
       --no-normalize   skip contrast stretching
       --bg COLOR       matte behind transparency (default #ffffff)
+
+caption
+      --out FILE       stem-keyed JSON output (default captions.json)
+      --trigger TOK    LoRA trigger token to prefix every caption
+      --txt            also write <stem>.txt beside each image
+      --no-resume      re-caption stems already in --out
+      --concurrency N  images in flight (default 4)
+      --prompt-file F  replace the built-in brief · --extra TEXT appends to it
+      --dry-run        list the work and print the brief, call nothing
 
 ocr
       --backend B      vision | windows | tesseract | tesseract.js
@@ -178,7 +219,8 @@ bun run check     # typecheck + tests
 
 MIT licensed.
 
-`ocr.ts` owns every platform backend behind one `ocrImage()` call.
+`ocr.ts` owns every platform backend behind one `ocrImage()` call, and
+`caption.ts` the bulk loop (resume, retry, concurrency, histogram).
 `render.ts` is pure (samples → lines) and holds every pixel decision.
 `image.ts` is the only file that knows about sharp. `core.ts` joins them, and
 `cli.ts` / `mcp.ts` are thin frontends over that one `view()` call.

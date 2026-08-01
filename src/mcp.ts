@@ -18,6 +18,7 @@ import { probe, readSource } from "./image.ts";
 import { RAMP_NAMES } from "./render.ts";
 import { ask, DEFAULT_MODEL, DEFAULT_PROMPT } from "./vlm.ts";
 import { availableBackends, BACKENDS, ocrImage } from "./ocr.ts";
+import { captionAll, collectTargets, shotTypeHistogram } from "./caption.ts";
 import type { BackendName } from "./ocr.ts";
 
 const text = (t: string, isError = false) =>
@@ -148,6 +149,63 @@ export function buildServer(): McpServer {
     return text(have.length
       ? have.map((b, i) => `${i === 0 ? "→" : " "} ${b}`).join("\n")
       : "none — install tesseract (brew/apt/choco install tesseract) or run `bun add tesseract.js`");
+  });
+
+  server.registerTool("see_caption", {
+    title: "Bulk-caption an image set",
+    description:
+      "Caption a whole folder of images into a stem-keyed JSON file, for LoRA/training datasets. " +
+      "Use this INSTEAD of captioning image-by-image yourself once there is more than a handful — " +
+      "it runs concurrently, retries rate limits, resumes (stems already in the output file are " +
+      "skipped, so new images cost only themselves), and reports a shot-type histogram. The default " +
+      "brief describes only what VARIES between photos and never the subject's face/hair/build, " +
+      "which is what keeps identity in the trigger token instead of leaking into words.",
+    inputSchema: {
+      inputs: z.array(z.string()).min(1)
+        .describe("Directories, image files, or a targets .json ({stem: path} or [{stem, path}])."),
+      out: z.string().describe("Output JSON path, keyed by file stem."),
+      trigger: z.string().optional().describe("LoRA trigger token to begin every caption with."),
+      extra: z.string().optional().describe("Extra context appended to the brief (era, wardrobe, notes)."),
+      prompt: z.string().optional().describe("Replace the built-in caption brief entirely."),
+      concurrency: z.number().int().min(1).max(16).optional().describe("Images in flight (default 4)."),
+      txt: z.boolean().optional().describe("Also write <stem>.txt beside each image (kohya/diffusers)."),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: true },
+  }, async ({ inputs, out, trigger, extra, prompt, concurrency, txt }) => {
+    try {
+      const targets = collectTargets(inputs);
+      if (!targets.length) return text(`no images found in: ${inputs.join(", ")}`, true);
+      const existing = await Bun.file(out).exists()
+        ? await Bun.file(out).json() as Record<string, string>
+        : undefined;
+      const acc: Record<string, string> = { ...(existing ?? {}) };
+      const flush = async () => Bun.write(out, JSON.stringify(
+        Object.fromEntries(Object.keys(acc).sort().map((k) => [k, acc[k]!])), null, 2) + "\n");
+      const run = await captionAll(targets, {
+        trigger, extra, prompt, existing, concurrency,
+        onResult: async (r) => {
+          if (r.caption && !r.skipped) { acc[r.stem] = r.caption; await flush(); }
+        },
+      });
+      Object.assign(acc, run.captions);
+      await flush();
+      if (txt) {
+        for (const r of run.records) {
+          if (r.caption) await Bun.write(r.path.replace(/\.[^.]+$/, "") + ".txt", r.caption + "\n");
+        }
+      }
+      const shots = Object.entries(shotTypeHistogram(run.captions))
+        .sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(" · ");
+      const failed = run.failed.length
+        ? `\n${run.failed.length} failed (re-run to retry only those): ` +
+          run.failed.map((f) => `${f.stem} — ${f.error}`).join("; ")
+        : "";
+      return text(
+        `wrote ${Object.keys(run.captions).length} captions to ${out} ` +
+        `(${run.skipped} already done, ${run.ms}ms)\nshot types: ${shots}${failed}`);
+    } catch (e) {
+      return text(e instanceof Error ? e.message : String(e), true);
+    }
   });
 
   server.registerTool("see_ask", {
