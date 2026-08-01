@@ -4,7 +4,8 @@
  * real vision model and get prose back.
  *
  * Keys are tried in order and rotated on any failure, so a rate-limited or dead
- * key costs one retry rather than the whole run.
+ * key costs one retry rather than the whole run. If every key is out of quota
+ * on the default model, we drop to an older one that has quota of its own.
  */
 
 import { readFileSync } from "node:fs";
@@ -17,6 +18,9 @@ export const keyFilePath = () =>
   join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "see", "key");
 
 export const DEFAULT_MODEL = "gemini-3.5-flash-lite";
+/** Where we go when every key is rate-limited on the default model: an older,
+ *  less contended sibling with its own quota. */
+export const FALLBACK_MODEL = "gemini-3.1-flash-lite";
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 export const DEFAULT_PROMPT =
@@ -98,6 +102,9 @@ export async function ask(bytes: Uint8Array, opts: AskOptions = {}): Promise<Ask
     );
   }
   const model = opts.model ?? DEFAULT_MODEL;
+  // Only the default gets a fallback — an explicit --model is a choice, not a
+  // default we are free to second-guess.
+  const models = model === DEFAULT_MODEL ? [model, FALLBACK_MODEL] : [model];
   const mime = sniffMime(bytes);
   const body = JSON.stringify({
     contents: [{
@@ -110,42 +117,52 @@ export async function ask(bytes: Uint8Array, opts: AskOptions = {}): Promise<Ask
   });
 
   const attempts: string[] = [];
-  for (let i = 0; i < keys.length; i++) {
-    opts.onAttempt?.({ index: i, total: keys.length, model });
-    try {
-      const res = await fetch(`${ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": keys[i]! },
-        body,
-        signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
-      });
-      if (!res.ok) {
-        const detail = (await res.text()).slice(0, 300).replace(/\s+/g, " ");
-        attempts.push(`key ${i + 1}: HTTP ${res.status} ${detail}`);
-        // 400 usually means a bad model name or malformed image — the next key
-        // would fail identically, so stop rather than burn every key.
-        if (res.status === 400 || res.status === 404) break;
-        continue;
+  models:
+  for (const m of models) {
+    // True once a key has been turned away for quota on this model — the only
+    // thing a different model can fix.
+    let rateLimited = false;
+    for (let i = 0; i < keys.length; i++) {
+      opts.onAttempt?.({ index: i, total: keys.length, model: m });
+      try {
+        const res = await fetch(`${ENDPOINT}/${encodeURIComponent(m)}:generateContent`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": keys[i]! },
+          body,
+          signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+        });
+        if (!res.ok) {
+          const detail = (await res.text()).slice(0, 300).replace(/\s+/g, " ");
+          attempts.push(`${m} key ${i + 1}: HTTP ${res.status} ${detail}`);
+          // 400 usually means a bad model name or malformed image — neither the
+          // next key nor the next model would fare better, so stop outright.
+          if (res.status === 400 || res.status === 404) break models;
+          if (res.status === 429 || res.status === 503) rateLimited = true;
+          continue;
+        }
+        const json = await res.json() as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
+          promptFeedback?: { blockReason?: string };
+        };
+        const blocked = json.promptFeedback?.blockReason;
+        if (blocked) {
+          attempts.push(`${m} key ${i + 1}: blocked (${blocked})`);
+          continue;
+        }
+        const text = (json.candidates?.[0]?.content?.parts ?? [])
+          .map((p) => p.text ?? "").join("").trim();
+        if (!text) {
+          attempts.push(`${m} key ${i + 1}: empty response (${json.candidates?.[0]?.finishReason ?? "no reason"})`);
+          continue;
+        }
+        return { text, model: m, keyIndex: i, attempts };
+      } catch (e) {
+        attempts.push(`${m} key ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const json = await res.json() as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
-        promptFeedback?: { blockReason?: string };
-      };
-      const blocked = json.promptFeedback?.blockReason;
-      if (blocked) {
-        attempts.push(`key ${i + 1}: blocked (${blocked})`);
-        continue;
-      }
-      const text = (json.candidates?.[0]?.content?.parts ?? [])
-        .map((p) => p.text ?? "").join("").trim();
-      if (!text) {
-        attempts.push(`key ${i + 1}: empty response (${json.candidates?.[0]?.finishReason ?? "no reason"})`);
-        continue;
-      }
-      return { text, model, keyIndex: i, attempts };
-    } catch (e) {
-      attempts.push(`key ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // Anything other than exhausted quota (dead keys, safety blocks, timeouts)
+    // will repeat on the fallback model too — do not pay for it twice.
+    if (!rateLimited) break;
   }
   throw new Error(`all ${keys.length} key(s) failed:\n  ${attempts.join("\n  ")}`);
 }

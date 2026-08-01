@@ -147,6 +147,12 @@ chmod 600 ~/.config/see/key
 That file takes a comma- or newline-separated list, so it doubles as your
 rotation pool.
 
+If *every* key is out of quota, `see` retries the whole pool once on
+`gemini-3.1-flash-lite`, which has its own quota. That only happens for 429/503
+— a dead key or a safety block would fail identically on the older model, so it
+is not paid for twice. Passing `--model` explicitly disables the swap: an
+explicit choice is not one to second-guess.
+
 ## Agent skill
 
 `skills/see/SKILL.md` is an [Agent Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills)

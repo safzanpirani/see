@@ -14,7 +14,7 @@ import { view, VIEW_DEFAULTS, MODES } from "./core.ts";
 import type { Mode, ViewOptions } from "./core.ts";
 import { probe, readSource, SourceError } from "./image.ts";
 import { RAMPS, RAMP_NAMES } from "./render.ts";
-import { ask, DEFAULT_MODEL, DEFAULT_PROMPT, resolveKeys } from "./vlm.ts";
+import { ask, DEFAULT_MODEL, DEFAULT_PROMPT, FALLBACK_MODEL, resolveKeys } from "./vlm.ts";
 import { availableBackends, BACKENDS, ocrImage } from "./ocr.ts";
 import { captionAll, captionPrompt, collectTargets, shotTypeHistogram } from "./caption.ts";
 import type { BackendName } from "./ocr.ts";
@@ -72,7 +72,8 @@ vision-model flags
   -a, --ask "Q"          also answer a question about the image
       --describe         also print a full VLM description + text transcript
       --no-fallback      fail instead of falling back to the VLM on a decode error
-      --model NAME       vision model (default ${DEFAULT_MODEL})
+      --model NAME       vision model (default ${DEFAULT_MODEL}; pinning it
+                         disables the ${FALLBACK_MODEL} retry on quota)
       --key K[,K2]       API key(s); else $SEE_API_KEYS / $GEMINI_API_KEY / ~/.config/see/key
 
 output flags

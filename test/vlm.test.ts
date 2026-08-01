@@ -1,5 +1,5 @@
 import { expect, test, describe, afterEach } from "bun:test";
-import { ask, resolveKeys, sniffMime } from "../src/vlm.ts";
+import { ask, DEFAULT_MODEL, FALLBACK_MODEL, resolveKeys, sniffMime } from "../src/vlm.ts";
 
 const realFetch = globalThis.fetch;
 // Point the key-file lookup at an empty directory so a real ~/.config/see/key
@@ -29,7 +29,7 @@ describe("resolveKeys", () => {
 
   test("no key is compiled into the source", async () => {
     const src = await Bun.file(`${import.meta.dir}/../src/vlm.ts`).text();
-    expect(src).not.toMatch(/AIza[0-9A-Za-z_-]{10}/);
+    expect(src).not.toMatch(/AIza[0-9A-Za-z_-]{10}|AQ\.[0-9A-Za-z_-]{10}/);
   });
 });
 
@@ -68,6 +68,39 @@ describe("ask", () => {
     expect(seen).toEqual(["k1", "k2"]);
     expect(r.keyIndex).toBe(1);
     expect(r.attempts[0]).toMatch(/HTTP 429/);
+  });
+
+  test("falls back to the older model when every key is rate-limited", async () => {
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      seen.push(url.includes(DEFAULT_MODEL) ? "default" : "fallback");
+      return url.includes(DEFAULT_MODEL) ? new Response("quota", { status: 429 }) : ok("answered");
+    }) as unknown as typeof fetch;
+    const r = await ask(new Uint8Array([0x89]), { keys: "k1,k2" });
+    expect(seen).toEqual(["default", "default", "fallback"]);
+    expect(r.model).toBe(FALLBACK_MODEL);
+    expect(r.text).toBe("answered");
+  });
+
+  test("does not try the fallback model when the failure is not quota", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response("boom", { status: 500 });
+    }) as unknown as typeof fetch;
+    await expect(ask(new Uint8Array([0x89]), { keys: "k1,k2" })).rejects.toThrow(/HTTP 500/);
+    expect(calls).toBe(2);
+  });
+
+  test("an explicit model is never silently swapped for the fallback", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response("quota", { status: 429 });
+    }) as unknown as typeof fetch;
+    await expect(ask(new Uint8Array([0x89]), { keys: "k1,k2", model: "pinned" }))
+      .rejects.toThrow(/HTTP 429/);
+    expect(calls).toBe(2);
   });
 
   test("a bad model (404) stops immediately instead of burning every key", async () => {
