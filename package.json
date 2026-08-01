@@ -1,0 +1,29 @@
+{
+  "name": "see",
+  "version": "0.1.0",
+  "description": "Look at an image without eyes — ASCII/braille rendering with a vision-model fallback",
+  "type": "module",
+  "bin": {
+    "see": "./src/cli.ts",
+    "asciiview": "./src/cli.ts",
+    "see-mcp": "./src/mcp.ts"
+  },
+  "scripts": {
+    "see": "bun run src/cli.ts",
+    "mcp": "bun run src/mcp.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun test",
+    "build:local": "bun build --compile src/cli.ts --outfile dist/see",
+    "build:linux": "bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/see-linux-x64"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "sharp": "^0.34.2",
+    "zod": "^4.4.3"
+  }
+}
