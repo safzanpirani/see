@@ -2,13 +2,14 @@
 
 Look at an image without eyes.
 
-`see` gives a text-only model two things: a cheap local ASCII render for
-**layout**, and a real vision model for **content**. Ask it what an image *says*
-and it uses eyes; ask where things *sit* and it uses the ramp.
+`see` gives a text-only model three ways to look at an image: a local ASCII
+render for **layout**, the OS text recogniser for **words**, and a vision model
+for **understanding**. Only the last one costs an API call.
 
 ```bash
 see shot.png                                  # ASCII layout, sized to your terminal
-see ask shot.png                              # what it actually says (vision model)
+see ocr shot.png                              # the text, offline and free
+see ask shot.png                              # what it means (vision model)
 see diagram.png --edges --grid                # structure + citable coordinates
 see https://share.safzan.dev/slQAA8YB.webp    # URLs work directly
 see ask photo.jpg "what model is the laptop?" # ask a vision model instead
@@ -45,10 +46,32 @@ So the workflow is:
 1. `see info shot.png` — real dimensions.
 2. `see shot.png -w 100 --grid` — one cheap pass for layout, with a coordinate
    ruler you can cite ("the button at column 40, row 12").
-3. `see ask shot.png` — read it. With no question you get a description plus a
-   verbatim transcript of every visible string.
-4. `see ask shot.png "transcribe the terminal in the lower right"` — or aim it at
-   the region step 2 told you about.
+3. `see ocr shot.png` — pull the words out locally. Free, offline, sub-second.
+4. `see ask shot.png` — when you need meaning rather than strings, or when OCR
+   comes back empty or mangled.
+
+## OCR (`see ocr`)
+
+No model, no network, no API key. `see` uses whatever the platform already
+ships, and only falls back to Tesseract where there is nothing native:
+
+| platform | backend | install cost |
+| --- | --- | --- |
+| macOS | Vision.framework (`VNRecognizeTextRequest`) | none — compiles a small cached helper on first run, needs Xcode CLT |
+| Windows | `Windows.Media.Ocr` (WinRT, via PowerShell 5.1) | none — built into Windows 10/11 |
+| Linux | `tesseract` binary | `apt install tesseract-ocr` |
+| anywhere | `tesseract.js` (WASM) | `bun add tesseract.js` — no system deps at all |
+
+Measured on the same 850×928 dark-mode screenshot: Vision 415 ms, Windows OCR
+~1 s, `tesseract` 740 ms, `tesseract.js` 2.3 s. Vision and Windows both picked
+up a small header line that Tesseract missed.
+
+`see ocr --backends` lists what the current machine can do, best first.
+`--backend NAME` forces one; `--lang en-US` (or `eng` for Tesseract) sets the
+recognition language.
+
+**OCR gives you strings, not meaning.** It will not tell you which button is
+disabled, what a chart implies, or what a photo is of. That is `see ask`.
 
 ## Modes
 
@@ -101,7 +124,8 @@ copying the folder into `~/.claude/skills/`.
 
 ## MCP server
 
-Expose the whole thing to an agent as tools — `see_render`, `see_ask`, `see_info`:
+Expose the whole thing to an agent as tools — `see_render`, `see_ocr`,
+`see_ocr_backends`, `see_ask`, `see_info`:
 
 ```bash
 claude mcp add see -- bun run /path/to/see/src/mcp.ts
@@ -124,6 +148,11 @@ render
       --threshold N    braille ink cutoff 0-255 (default: Otsu)
       --no-normalize   skip contrast stretching
       --bg COLOR       matte behind transparency (default #ffffff)
+
+ocr
+      --backend B      vision | windows | tesseract | tesseract.js
+      --lang L[,L2]    recognition languages
+      --backends       list what this machine can use
 
 vision model
   -a, --ask "Q"        also answer a question about the image
@@ -149,6 +178,7 @@ bun run check     # typecheck + tests
 
 MIT licensed.
 
+`ocr.ts` owns every platform backend behind one `ocrImage()` call.
 `render.ts` is pure (samples → lines) and holds every pixel decision.
 `image.ts` is the only file that knows about sharp. `core.ts` joins them, and
 `cli.ts` / `mcp.ts` are thin frontends over that one `view()` call.

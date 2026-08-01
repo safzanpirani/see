@@ -1,6 +1,6 @@
 ---
 name: see
-description: Read an image when you have no vision — a screenshot, diagram, photo, chart, PDF page, or an image URL. `see ask` sends it to a vision model and returns a description plus a verbatim transcript of every visible string; `see <img>` renders a local ASCII layout map for free. Use when the user references an image/screenshot/diagram/mockup by path or URL, pastes a share link (share.safzan.dev, CleanShot, imgur, a CDN), asks "what does this say/show", asks you to transcribe or OCR an image, compare a UI against a design, debug from a screenshot of an error, or when a tool hands back an image path you must act on. Also use instead of writing any ad-hoc pixel-decoding, ASCII-art, or image-parsing script yourself.
+description: Read an image when you have no vision — a screenshot, diagram, photo, chart, PDF page, or an image URL. `see ocr` extracts text locally with the OS recogniser (free, offline, sub-second); `see ask` sends it to a vision model for meaning; `see <img>` renders an ASCII layout map. Use when the user references an image/screenshot/diagram/mockup by path or URL, pastes a share link (share.safzan.dev, CleanShot, imgur, a CDN), asks "what does this say/show", asks you to transcribe or OCR an image, compare a UI against a design, debug from a screenshot of an error, or when a tool hands back an image path you must act on. Also use instead of writing any ad-hoc pixel-decoding, ASCII-art, or image-parsing script yourself.
 ---
 
 # see
@@ -8,13 +8,13 @@ description: Read an image when you have no vision — a screenshot, diagram, ph
 `see` is a global CLI (`~/Development/see`, on PATH via `bun link`) that turns an image
 into something a text-only model can act on. Local path, http(s) URL, or `-` for stdin.
 
-**The one rule: `see ask` reads, `see` renders.** Content — words, numbers, code, labels,
-what a photo is of — only ever comes from `see ask`. The ASCII render gives you layout
-and nothing else.
+**The rule: `see ocr` for words, `see ask` for meaning, `see` for layout.** Never try to
+read content off the ASCII render — it carries layout and nothing else.
 
 ## Quick start
 
 ```sh
+see ocr shot.png                                # the text — local, free, offline, <1s
 see ask shot.png                                # description + full text transcript
 see ask shot.png "what's the error in the terminal?"
 see ask https://share.safzan.dev/slQAA8YB.webp  # URLs work directly
@@ -22,13 +22,19 @@ see shot.png -w 100 --grid                      # local layout map, free, instan
 see info shot.png                               # dimensions/format only
 ```
 
-Default to `see ask`. It is one API call and answers almost every real question.
+Try `see ocr` first when you only need the text — it costs nothing and takes under a
+second. Reach for `see ask` when you need understanding, or when OCR comes back empty
+or garbled (a photo, a handwritten note, heavy stylisation).
+
+OCR uses whatever the OS ships: Vision on macOS, Windows.Media.Ocr on Windows, Tesseract
+on Linux. `see ocr --backends` shows what this machine has.
 
 ## Choosing
 
 | you need | command |
 | --- | --- |
-| what it says / shows / which button is red | `see ask <src> [question]` |
+| the words: logs, code, stack traces, error dialogs, docs | `see ocr <src>` |
+| meaning: what a photo shows, which button is disabled, what a chart implies | `see ask <src> [question]` |
 | where blocks sit, rough proportions, is it a wide screenshot or a phone shot | `see <src> -w 100` |
 | coordinates to crop into next | `see <src> --grid` then `see ask <src>` |
 | just the pixel dimensions | `see info <src>` |
@@ -41,7 +47,7 @@ Default to `see ask`. It is one API call and answers almost every real question.
   decode it.
 - **Do not try to read text off an ASCII render.** Any glyph smaller than one character
   cell was averaged away. If you find yourself squinting at `:::` guessing letters, stop
-  and run `see ask`.
+  and run `see ocr` (or `see ask`).
 - **Do not write your own decoder.** No `PIL`/`sharp`/base64/pixel-forensics script, no
   hand-rolled braille or ASCII converter. That loop is exactly what `see` exists to end.
 - **Do not paste a full-size render into your reply.** It is hundreds of lines and the
@@ -88,11 +94,19 @@ error means that file is missing — free keys at <https://aistudio.google.com/a
 
 ## MCP
 
-Same three actions as tools, for MCP clients: `see_render`, `see_ask`, `see_info`.
+Same actions as tools, for MCP clients: `see_ocr`, `see_ocr_backends`, `see_ask`,
+`see_render`, `see_info`.
 
 ```sh
 claude mcp add see -- bun run ~/Development/see/src/mcp.ts
 ```
+
+## OCR flags
+
+`--backends` list engines, best first · `--backend vision|windows|tesseract|tesseract.js`
+force one · `--lang en-US` (Vision/Windows) or `--lang eng` (Tesseract) · `--json` for
+`{backend, ms, lines}`. Empty output means the recogniser found nothing — switch to
+`see ask` rather than retrying with another backend.
 
 ## Render flags (layout only)
 

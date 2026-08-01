@@ -17,6 +17,8 @@ import type { Mode } from "./core.ts";
 import { probe, readSource } from "./image.ts";
 import { RAMP_NAMES } from "./render.ts";
 import { ask, DEFAULT_MODEL, DEFAULT_PROMPT } from "./vlm.ts";
+import { availableBackends, BACKENDS, ocrImage } from "./ocr.ts";
+import type { BackendName } from "./ocr.ts";
 
 const text = (t: string, isError = false) =>
   ({ content: [{ type: "text" as const, text: t || "(no output)" }], isError });
@@ -102,13 +104,60 @@ export function buildServer(): McpServer {
     }
   });
 
+  server.registerTool("see_ocr", {
+    title: "Extract text from an image (local, no model)",
+    description:
+      "Run the operating system's own text recogniser over an image and return the text: " +
+      "Vision.framework on macOS, Windows.Media.Ocr on Windows, Tesseract on Linux. Local, " +
+      "offline, no API call, typically under a second. Use this FIRST whenever you only need the " +
+      "words — logs, code, stack traces, error dialogs, documents, dense UI labels. It returns " +
+      "strings with no understanding: for what an image MEANS, which element is highlighted, or " +
+      "what a photo depicts, use see_ask instead.",
+    inputSchema: {
+      source: z.string().describe("Path to an image file, or an http(s) URL."),
+      backend: z.enum(BACKENDS as [BackendName, ...BackendName[]]).optional()
+        .describe("Force a backend. Omit to use the best one this machine has."),
+      languages: z.string().optional()
+        .describe("Comma-separated language codes, e.g. 'en-US' (Vision/Windows) or 'eng' (Tesseract)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, async ({ source, backend, languages }) => {
+    try {
+      const r = await ocrImage(source, {
+        backend,
+        languages: languages?.split(",").map((l) => l.trim()).filter(Boolean),
+      });
+      if (!r.lines.length) {
+        return text(`${r.backend} found no text in ${source}. If the image is a photo, a diagram, ` +
+          "or the text is very small, call see_ask instead.");
+      }
+      return text(`${r.backend} · ${r.lines.length} lines · ${r.ms}ms\n\n${r.text}`);
+    } catch (e) {
+      return text(e instanceof Error ? e.message : String(e), true);
+    }
+  });
+
+  server.registerTool("see_ocr_backends", {
+    title: "List available OCR backends",
+    description: "Report which local OCR engines this machine can use, best first. Useful when " +
+      "see_ocr fails and you need to know whether anything is installed at all.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async () => {
+    const have = await availableBackends();
+    return text(have.length
+      ? have.map((b, i) => `${i === 0 ? "→" : " "} ${b}`).join("\n")
+      : "none — install tesseract (brew/apt/choco install tesseract) or run `bun add tesseract.js`");
+  });
+
   server.registerTool("see_ask", {
     title: "Ask a vision model about an image",
     description:
-      "Send the image to a real vision model and get prose back. This is the ONLY way to read text, " +
-      "transcribe a UI, or identify the contents of a photo — see_render gives you layout, this gives " +
-      "you the actual content. Use it directly when the question is about what the image SAYS or " +
-      "SHOWS; use see_render first only when the question is about where things sit on the page.",
+      "Send the image to a real vision model and get prose back. Use it when you need UNDERSTANDING: " +
+      "what a photo shows, which control is disabled, what a chart implies, how a layout should be " +
+      "rebuilt. For plain text extraction prefer see_ocr, which is local, free and faster — fall back " +
+      "here when OCR returns nothing, mangles the text, or the question is not answerable from " +
+      "strings alone.",
     inputSchema: {
       source: z.string().describe("Path to an image file, or an http(s) URL."),
       question: z.string().optional()

@@ -15,6 +15,8 @@ import type { Mode, ViewOptions } from "./core.ts";
 import { probe, readSource, SourceError } from "./image.ts";
 import { RAMPS, RAMP_NAMES } from "./render.ts";
 import { ask, DEFAULT_MODEL, DEFAULT_PROMPT, resolveKeys } from "./vlm.ts";
+import { availableBackends, BACKENDS, ocrImage } from "./ocr.ts";
+import type { BackendName } from "./ocr.ts";
 
 const A = {
   g: (s: string) => `\x1b[32m${s}\x1b[0m`, r: (s: string) => `\x1b[31m${s}\x1b[0m`,
@@ -29,6 +31,7 @@ function die(m: string): never {
 const HELP = `${A.b("see")} — look at an image without eyes
 
   ${A.b("see")} <image|url|-> [flags]     render it as text (default)
+  ${A.b("see")} ocr <src>                  extract text locally, no model, no network
   ${A.b("see")} ask <src> [question…]     ask a vision model (${DEFAULT_MODEL})
   ${A.b("see")} info <src>                source dimensions / format
   ${A.b("see")} charsets                  list built-in ramps
@@ -48,6 +51,11 @@ render flags
       --no-normalize     skip contrast stretching
       --bg COLOR         matte behind transparency (default #ffffff)
 
+ocr flags
+      --backend B        force ${BACKENDS.join("|")} (default: best available)
+      --lang L[,L2]      recognition languages (e.g. en-US, or eng for tesseract)
+      --backends         list which OCR backends this machine can use
+
 vision-model flags
   -a, --ask "Q"          also answer a question about the image
       --describe         also print a full VLM description + text transcript
@@ -60,14 +68,17 @@ output flags
   -q, --quiet            no stderr info header
       --json             emit {text, info, answer} as JSON
 
-reading text? use ${A.b("see ask")}. A language model cannot decode braille — each
-  glyph is one opaque codepoint, not eight visible dots — and an ASCII ramp
-  loses any glyph smaller than a cell. Only the vision model reads text.
+reading text? ${A.b("see ocr")} is local, free and offline — it uses the OS text
+  recogniser (Vision on macOS, Windows.Media.Ocr on Windows, Tesseract on Linux).
+  ${A.b("see ask")} costs an API call but understands what it is looking at. Never try
+  to read text off the ASCII ramp, and never off braille — a language model
+  cannot decode either one.
 
 examples
   see shot.png -w 120                         # layout: panels, blocks, boxes
   see diagram.png --edges --grid              # structure + citable coordinates
   see https://share.safzan.dev/slQAA8YB.webp  # URLs work directly
+  see ocr shot.png                            # just the text, offline
   see ask shot.png                            # full description + text transcript
   see ask photo.jpg "what model is the laptop?"
   cat shot.png | see - -q > shot.txt`;
@@ -192,6 +203,38 @@ async function main() {
   const model = modelFlag === true || modelFlag === undefined ? undefined : modelFlag;
   const key = keyFlag === true || keyFlag === undefined ? undefined : keyFlag;
 
+  if (args[0] === "ocr" || pullFlag(args, "--backends")) {
+    const listOnly = args[0] !== "ocr";
+    if (!listOnly) args.shift();
+    if (listOnly || pullFlag(args, "--backends")) {
+      const have = await availableBackends();
+      console.log(have.length
+        ? have.map((b, i) => `${i === 0 ? A.g("→") : " "} ${b}`).join("\n")
+        : A.y("none — install tesseract, or `bun add tesseract.js`"));
+      if (!args.length) return;
+    }
+    const src = args.find((a) => !a.startsWith("-") || a === "-") ?? die("ocr needs an image");
+    const backendRaw = pullVal(args, ["--backend"]);
+    const backend = backendRaw === undefined || backendRaw === true
+      ? undefined
+      : backendRaw as BackendName;
+    if (backend && !BACKENDS.includes(backend)) {
+      die(`--backend must be one of ${BACKENDS.join(", ")} (got '${backend}')`);
+    }
+    const langRaw = pullVal(args, ["--lang", "--langs"]);
+    const languages = langRaw === undefined || langRaw === true
+      ? undefined
+      : String(langRaw).split(",").map((l) => l.trim()).filter(Boolean);
+    const r = await ocrImage(src, { backend, languages });
+    const payload = json
+      ? JSON.stringify({ source: src, backend: r.backend, ms: r.ms, lines: r.lines }, null, 2)
+      : r.text;
+    if (out && out !== true) await Bun.write(String(out), payload + "\n");
+    else console.log(payload);
+    if (!quiet && !json) console.error(A.d(`${r.backend} · ${r.lines.length} lines · ${r.ms}ms`));
+    return;
+  }
+
   // `see ask <src> [question…]` — everything after the source is the question.
   if (args[0] === "ask") {
     args.shift();
@@ -287,7 +330,9 @@ async function main() {
       console.error(A.y("! braille is for human eyes — a model reads each glyph as one opaque "
         + "codepoint, not as dots. If a model is consuming this, use `see ask` instead."));
     }
-    if (answer === undefined) console.error(A.d("· text too small to survive the ramp? `see ask " + src + "`"));
+    if (answer === undefined) {
+      console.error(A.d(`· need the text? \`see ocr ${src}\` (offline) or \`see ask ${src}\` (understands it)`));
+    }
     console.error(A.d(
       `${i.format} ${i.srcWidth}x${i.srcHeight} → ${i.cols}x${i.rows} ${i.mode}` +
       `${i.inverted ? " (inverted)" : ""} · mean luma ${i.meanLuminance}`,
