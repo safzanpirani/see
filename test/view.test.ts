@@ -1,7 +1,7 @@
 import { expect, test, describe, beforeAll } from "bun:test";
 import sharp from "sharp";
 import { view } from "../src/core.ts";
-import { loadSampled, probe } from "../src/image.ts";
+import { loadSampled, probe, readSource, SourceError } from "../src/image.ts";
 import { stripAnsi } from "../src/render.ts";
 
 const DIR = `${import.meta.dir}/fixtures`;
@@ -123,5 +123,21 @@ describe("loadSampled", () => {
       .png().toBuffer();
     const { sampled } = await loadSampled(new Uint8Array(green), { cols: 2, rows: 2, normalize: false });
     expect(sampled.lum[0]).toBe(150);
+  });
+});
+
+describe("source errors", () => {
+  test("a missing file is a SourceError, so the CLI will not try the vision model", async () => {
+    await expect(readSource("/nope/missing.png")).rejects.toBeInstanceOf(SourceError);
+  });
+
+  test("an HTTP failure is a SourceError too — the model cannot fetch it either", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("nope", { status: 404 })) as unknown as typeof fetch;
+    try {
+      await expect(readSource("https://example.com/gone.png")).rejects.toBeInstanceOf(SourceError);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

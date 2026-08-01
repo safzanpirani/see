@@ -28,20 +28,24 @@ export interface Loaded {
   format: string;
 }
 
+/** The source could not be fetched at all — as opposed to fetched-but-undecodable.
+ *  Callers use this to tell "your path is wrong" from "try the vision model". */
+export class SourceError extends Error {}
+
 /** Resolve `src` — a path, an http(s) URL, or `-` for stdin — to bytes. */
 export async function readSource(src: string): Promise<Uint8Array> {
   if (src === "-") {
     const buf = await Bun.readableStreamToArrayBuffer(Bun.stdin.stream());
-    if (buf.byteLength === 0) throw new Error("no image bytes on stdin");
+    if (buf.byteLength === 0) throw new SourceError("no image bytes on stdin");
     return new Uint8Array(buf);
   }
   if (/^https?:\/\//.test(src)) {
     const res = await fetch(src);
-    if (!res.ok) throw new Error(`fetch ${src} failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) throw new SourceError(`fetch ${src} failed: ${res.status} ${res.statusText}`);
     return new Uint8Array(await res.arrayBuffer());
   }
   const file = Bun.file(src);
-  if (!(await file.exists())) throw new Error(`no such file: ${src}`);
+  if (!(await file.exists())) throw new SourceError(`no such file: ${src}`);
   return new Uint8Array(await file.arrayBuffer());
 }
 

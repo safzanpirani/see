@@ -92,6 +92,13 @@ chmod 600 ~/.config/see/key
 That file takes a comma- or newline-separated list, so it doubles as your
 rotation pool.
 
+## Agent skill
+
+`skills/see/SKILL.md` is an [Agent Skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills)
+that teaches a coding agent when to reach for `see` — and, importantly, when not to
+(no braille, no reading text off the ramp, no home-grown pixel decoders). Install it by
+copying the folder into `~/.claude/skills/`.
+
 ## MCP server
 
 Expose the whole thing to an agent as tools — `see_render`, `see_ask`, `see_info`:

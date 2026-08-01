@@ -12,7 +12,7 @@
  */
 import { view, VIEW_DEFAULTS, MODES } from "./core.ts";
 import type { Mode, ViewOptions } from "./core.ts";
-import { probe, readSource } from "./image.ts";
+import { probe, readSource, SourceError } from "./image.ts";
 import { RAMPS, RAMP_NAMES } from "./render.ts";
 import { ask, DEFAULT_MODEL, DEFAULT_PROMPT, resolveKeys } from "./vlm.ts";
 
@@ -250,8 +250,9 @@ async function main() {
       threshold: thresholdRaw === undefined ? "auto" : num(thresholdRaw, "--threshold", 128, 0),
     });
   } catch (e) {
-    // A decode failure is exactly when eyes beat a character ramp.
-    if (noFallback) throw e;
+    // A decode failure is exactly when eyes beat a character ramp. A source we
+    // never got hold of is not — the VLM cannot fetch it either.
+    if (noFallback || e instanceof SourceError) throw e;
     const why = e instanceof Error ? e.message : String(e);
     if (!quiet) console.error(A.y(`! cannot render locally (${why}) — falling back to the vision model`));
     const answer = await askVlm(src, askRaw === true || askRaw === undefined ? undefined : askRaw,
