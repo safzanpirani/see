@@ -6,6 +6,8 @@ Look at an image without eyes.
 render for **layout**, the OS text recogniser for **words**, and a vision model
 for **understanding**. Only the last one costs an API call.
 
+![see in action](demo/see-demo.gif)
+
 ```bash
 see shot.png                                  # ASCII layout, sized to your terminal
 see ocr shot.png                              # the text, offline and free
