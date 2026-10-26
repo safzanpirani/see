@@ -12,7 +12,7 @@
     "see": "bun run src/cli.ts",
     "mcp": "bun run src/mcp.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun check --no-script",
     "check": "bun run typecheck && bun test",
     "build:local": "bun build --compile src/cli.ts --outfile dist/see",
     "build:linux": "bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/see-linux-x64"
