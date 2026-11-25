@@ -4,6 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import {
   captionAll, captionPrompt, collectTargets, shotTypeHistogram, tidy,
 } from "../src/caption.ts";
+import { resolveKeys } from "../src/vlm.ts";
 
 const DIR = `${import.meta.dir}/fixtures/caption`;
 // Explicit keys everywhere: fetch is mocked, and another test file redirects
@@ -110,6 +111,27 @@ describe("captionAll", () => {
     expect(run.failed.length).toBe(1);
     expect(Object.keys(run.captions).length).toBe(2);
     expect(run.failed[0]!.error).toBeTruthy();
+  });
+
+  test("a batch failure line keeps each key's reason, identical ones counted", async () => {
+    let n = 0;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      error: {
+        code: 429,
+        message: `You exceeded your current quota. Please retry in ${n++}.5s.`,
+        status: "RESOURCE_EXHAUSTED",
+      },
+    }), { status: 429 })) as unknown as typeof fetch;
+    const run = await captionAll([{ stem: "solo", path: `${DIR}/a_first.png` }], { retries: 1, keys: "k1,k2" });
+    const error = run.failed[0]!.error!;
+    // The ambient key chain may add keys on a dev machine; count what ask() tried.
+    const k = resolveKeys("k1,k2").length;
+    expect(error).not.toContain("\n");
+    expect(error).toBe(
+      `all ${k} key(s) failed: ` +
+      `${k}× gemini-3.5-flash-lite: HTTP 429 RESOURCE_EXHAUSTED: You exceeded your current quota; ` +
+      `${k}× gemini-3.1-flash-lite: HTTP 429 RESOURCE_EXHAUSTED: You exceeded your current quota`,
+    );
   });
 
   test("retries a failing image before giving up", async () => {

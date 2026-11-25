@@ -132,4 +132,10 @@ describe("ask", () => {
     await expect(ask(new Uint8Array([0x89]), { keys: "k1,k2" }))
       .rejects.toThrow(/all 2 key\(s\) failed/);
   });
+
+  test("Gemini calls bypass an inherited proxy", () => {
+    // Bun's fetch rejects socks5h:// proxies, so a shell proxy must not reach us.
+    const bypass = `${process.env.NO_PROXY ?? ""},${process.env.no_proxy ?? ""}`.split(",");
+    expect(bypass).toContain("generativelanguage.googleapis.com");
+  });
 });

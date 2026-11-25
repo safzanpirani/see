@@ -21,7 +21,20 @@ export const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 /** Where we go when every key is rate-limited on the default model: an older,
  *  less contended sibling with its own quota. */
 export const FALLBACK_MODEL = "gemini-3.1-flash-lite";
-const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
+const HOST = "generativelanguage.googleapis.com";
+const ENDPOINT = `https://${HOST}/v1beta/models`;
+
+// Gemini calls always go direct. A shell's proxy env (an egress helper's
+// `socks5h://` exit, say) is meant for other traffic, and Bun's fetch rejects
+// socks5h outright, failing every key. Bun reads NO_PROXY per request, so
+// listing our host there once covers every call site in this file.
+{
+  const set = ["NO_PROXY", "no_proxy"].filter((k) => process.env[k] !== undefined);
+  for (const k of set.length ? set : ["NO_PROXY"]) {
+    const cur = process.env[k];
+    if (!cur?.split(",").some((h) => h.trim() === HOST)) process.env[k] = cur ? `${cur},${HOST}` : HOST;
+  }
+}
 
 export const DEFAULT_PROMPT =
   "Describe this image for a reader who cannot see it. Transcribe ALL visible text verbatim, " +
@@ -132,8 +145,7 @@ export async function ask(bytes: Uint8Array, opts: AskOptions = {}): Promise<Ask
           signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
         });
         if (!res.ok) {
-          const detail = (await res.text()).slice(0, 300).replace(/\s+/g, " ");
-          attempts.push(`${m} key ${i + 1}: HTTP ${res.status} ${detail}`);
+          attempts.push(`${m} key ${i + 1}: HTTP ${res.status} ${errorDetail(await res.text())}`);
           // 400 usually means a bad model name or malformed image — neither the
           // next key nor the next model would fare better, so stop outright.
           if (res.status === 400 || res.status === 404) break models;
@@ -164,5 +176,44 @@ export async function ask(bytes: Uint8Array, opts: AskOptions = {}): Promise<Ask
     // will repeat on the fallback model too — do not pay for it twice.
     if (!rateLimited) break;
   }
-  throw new Error(`all ${keys.length} key(s) failed:\n  ${attempts.join("\n  ")}`);
+  throw new KeysFailedError(keys.length, attempts);
+}
+
+/** Google's error JSON puts `status` after a long message, past where a plain
+ *  truncation cuts; lead with it. */
+function errorDetail(body: string): string {
+  let detail = body;
+  try {
+    const json: unknown = JSON.parse(body);
+    if (json && typeof json === "object" && "error" in json && json.error && typeof json.error === "object") {
+      const e = json.error;
+      const status = "status" in e && typeof e.status === "string" ? e.status : "";
+      const message = "message" in e && typeof e.message === "string" ? e.message : "";
+      if (status || message) detail = [status, message].filter(Boolean).join(": ");
+    }
+  } catch { /* not JSON: keep the raw body */ }
+  return detail.replace(/\s+/g, " ").trim().slice(0, 300);
+}
+
+/** Every key (and the fallback model) failed. The message lists each attempt. */
+export class KeysFailedError extends Error {
+  readonly attempts: string[];
+  readonly keyCount: number;
+  constructor(keyCount: number, attempts: string[]) {
+    super(`all ${keyCount} key(s) failed:\n  ${attempts.join("\n  ")}`);
+    this.keyCount = keyCount;
+    this.attempts = attempts;
+  }
+
+  /** One line for batch logs: each attempt's first sentence, identical ones
+   *  collapsed to a count. */
+  get summary(): string {
+    const counts = new Map<string, number>();
+    for (const a of this.attempts) {
+      const reason = a.replace(/ key \d+: /, ": ").split(/\.\s/)[0]!;
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+    const reasons = [...counts].map(([r, n]) => (n > 1 ? `${n}× ${r}` : r));
+    return `all ${this.keyCount} key(s) failed: ${reasons.join("; ")}`;
+  }
 }

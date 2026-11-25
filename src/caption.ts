@@ -9,7 +9,7 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
-import { ask } from "./vlm.ts";
+import { ask, KeysFailedError } from "./vlm.ts";
 import { readSource } from "./image.ts";
 
 /** Extensions we will hand to the model. Matches what sharp/Gemini accept. */
@@ -187,7 +187,8 @@ export async function captionAll(targets: Target[], opts: CaptionOptions = {}): 
           rec = { ...target, caption, ms: Date.now() - started };
           break;
         } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
+          // A batch log has one line per image; keep the per-key reasons in it.
+          const message = e instanceof KeysFailedError ? e.summary : e instanceof Error ? e.message : String(e);
           if (attempt === retries) {
             rec = { ...target, error: message, ms: Date.now() - started };
           } else {
