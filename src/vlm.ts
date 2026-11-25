@@ -21,20 +21,13 @@ export const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 /** Where we go when every key is rate-limited on the default model: an older,
  *  less contended sibling with its own quota. */
 export const FALLBACK_MODEL = "gemini-3.1-flash-lite";
-const HOST = "generativelanguage.googleapis.com";
-const ENDPOINT = `https://${HOST}/v1beta/models`;
+const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-// Gemini calls always go direct. A shell's proxy env (an egress helper's
-// `socks5h://` exit, say) is meant for other traffic, and Bun's fetch rejects
-// socks5h outright, failing every key. Bun reads NO_PROXY per request, so
-// listing our host there once covers every call site in this file.
-{
-  const set = ["NO_PROXY", "no_proxy"].filter((k) => process.env[k] !== undefined);
-  for (const k of set.length ? set : ["NO_PROXY"]) {
-    const cur = process.env[k];
-    if (!cur?.split(",").some((h) => h.trim() === HOST)) process.env[k] = cur ? `${cur},${HOST}` : HOST;
-  }
-}
+/** Every Gemini call goes direct. A shell's proxy env (an egress helper's
+ *  `socks5h://` exit, say) is meant for other traffic, and Bun's fetch rejects
+ *  socks5h outright, failing every key. `proxy: false` skips the env proxy for
+ *  this request only; the env, and so child processes, stay untouched. */
+const gemini = (url: string, init: RequestInit = {}) => fetch(url, { ...init, proxy: false });
 
 export const DEFAULT_PROMPT =
   "Describe this image for a reader who cannot see it. Transcribe ALL visible text verbatim, " +
@@ -138,7 +131,7 @@ export async function ask(bytes: Uint8Array, opts: AskOptions = {}): Promise<Ask
     for (let i = 0; i < keys.length; i++) {
       opts.onAttempt?.({ index: i, total: keys.length, model: m });
       try {
-        const res = await fetch(`${ENDPOINT}/${encodeURIComponent(m)}:generateContent`, {
+        const res = await gemini(`${ENDPOINT}/${encodeURIComponent(m)}:generateContent`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-goog-api-key": keys[i]! },
           body,

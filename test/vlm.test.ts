@@ -133,9 +133,17 @@ describe("ask", () => {
       .rejects.toThrow(/all 2 key\(s\) failed/);
   });
 
-  test("Gemini calls bypass an inherited proxy", () => {
-    // Bun's fetch rejects socks5h:// proxies, so a shell proxy must not reach us.
-    const bypass = `${process.env.NO_PROXY ?? ""},${process.env.no_proxy ?? ""}`.split(",");
-    expect(bypass).toContain("generativelanguage.googleapis.com");
+  test("Gemini calls bypass an inherited proxy without touching the env", async () => {
+    // Bun's fetch rejects socks5h:// proxies, so a shell proxy must not reach us,
+    // but child processes must still see the user's proxy settings unchanged.
+    const before = { NO_PROXY: process.env.NO_PROXY, no_proxy: process.env.no_proxy };
+    let init: { proxy?: unknown } | undefined;
+    globalThis.fetch = (async (_url: string, i: { proxy?: unknown }) => {
+      init = i;
+      return ok("fine");
+    }) as unknown as typeof fetch;
+    await ask(new Uint8Array([0x89]), { keys: "k1" });
+    expect(init?.proxy).toBe(false);
+    expect({ NO_PROXY: process.env.NO_PROXY, no_proxy: process.env.no_proxy }).toEqual(before);
   });
 });
